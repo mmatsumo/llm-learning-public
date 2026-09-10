@@ -1,0 +1,9 @@
+Metadata-Version: 2.4
+Name: llm-learning
+Version: 0.1.0
+Summary: 12-week LLM & Agentic AI learning journey
+Requires-Python: >=3.10
+Requires-Dist: torch>=2.0
+Requires-Dist: jupyter>=1.0
+Requires-Dist: numpy>=1.24
+Requires-Dist: ipython>=8.0

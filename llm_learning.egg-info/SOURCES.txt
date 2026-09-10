@@ -1,0 +1,7 @@
+README.md
+pyproject.toml
+llm_learning.egg-info/PKG-INFO
+llm_learning.egg-info/SOURCES.txt
+llm_learning.egg-info/dependency_links.txt
+llm_learning.egg-info/requires.txt
+llm_learning.egg-info/top_level.txt
