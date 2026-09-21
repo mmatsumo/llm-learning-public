@@ -1,4 +1,4 @@
-# LLM Learning Journey (12 weeks)
+# LLM Learning Journey (goal twelve weeks)
 
 ## Week 0: Foundations
 - [ ] Environment setup
