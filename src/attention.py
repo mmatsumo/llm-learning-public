@@ -12,17 +12,7 @@ batch_size, seq_len, d_model = 4, 64, 512
 Q = torch.randn(batch_size, seq_len,d_model) #shape
 K = torch.randn(batch_size, seq_len, d_model) #shape
 V = torch.randn(batch_size, seq_len, d_model) #shape
-"""W_o = torch.randn(batch_size, d_model, seq_len)
-W_q = torch.randn(batch_size, d_model, seq_len)
-W_k = torch.randn(batch_size, d_model, seq_len)
-W_v = torch.randn(batch_size, d_model, seq_len)
 
-print('Q ', Q.shape)
-print('W_q ', W_q.shape)
-
-#print(K.shape, 'K = ', K[:,0])
-#print(V.shape, 'V = ', V[:,0])
-"""
 
 # ScaledDotProductAttention
 class ScaledDotProductAttention(nn.Module):
