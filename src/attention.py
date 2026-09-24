@@ -123,22 +123,86 @@ class MultiHeadAttention(nn.Module):
         output = self.W_o(concat_head)
         return output
 
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model):
+        super().__init__()
+        assert d_model % 2 == 0
+        self.d_model=d_model
 
-""" attention= ScaledDotProductAttention(d_model)
+    def forward(self, x):
+        """
+        Args:
+            x: (batch_size, seq_len, d_model)
+        
+        Returns:
+            x + positional_encoding: (batch_size, seq_len, d_model)
+        """
+        seq_len = Q.shape[-2]
+        pos_encoding = torch.zeros(seq_len,self.d_model)
+        
+
+        for pos in range(seq_len):
+            for i in range(self.d_model //2):
+                pos_encoding[pos,2*i] = math.sin(pos/(10000**(2*i/self.d_model)) )
+                pos_encoding[pos,2*i+1] = math.cos(pos/(10000**(2*i/self.d_model)) )
+
+        pos_encoding = pos_encoding.unsqueeze(0)  # (1, seq_len, d_model)
+        # adding pos_encoding to input x
+
+        return pos_encoding + x
+
+class FeedForward(nn.Module):
+    def __init__(self, d_model: int, d_ff: int = None, dropout: float = 0.1):
+        super().__init__()
+        
+        # If d_ff not provided, use d_model * 4
+        if d_ff is None:
+            d_ff = d_model * 4
+
+        self.fc1 = nn.Linear(d_model, d_ff)
+        self.ReLU = nn.ReLU()
+        self.fc2 = nn.Linear(d_ff,d_model)
+        self.dropout = nn.Dropout(dropout)
+
+        
+    def forward(self, x):
+        """
+        Args:
+            x: (batch_size, seq_len, d_model)
+        
+        Returns:
+            output: (batch_size, seq_len, d_model)
+        """
+        # TODO: Apply linear → ReLU → linear → dropout
+        x = self.fc1(x) # x expanded
+        x= self.ReLU( x) # x hidden
+        x = self.fc2(x)
+        output = self.dropout(x)
+
+        return output
+
+"""
+attention= ScaledDotProductAttention(d_model)
 
 mask = torch.tril(torch.ones(seq_len, seq_len))
 
 att, weights= attention(Q,K,V,mask)
 print("Attention ", att.shape)
-print("Attention ", att)
+#print("Attention ", att)
 
 print("Weights ", weights.shape) 
 
 multi_attention = MultiHeadAttention(d_model) 
 mask = torch.tril(torch.ones(seq_len, seq_len))
 
-# Mask needs to Add batch and head dimensions, becomes [1, 1, seq_len, seq_len] for broadcasting
+#[1, 1, seq_len, seq_len] for broadcasting
 mask = mask.unsqueeze(0).unsqueeze(0)  
 output = multi_attention(Q,K,V, mask)
+
+
+
+ff_test = FeedForward(d_model)
+Q_o = ff_test(Q)
+print(Q_o.shape)
 
 """
