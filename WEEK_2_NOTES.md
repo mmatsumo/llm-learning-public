@@ -32,6 +32,16 @@ Successfully implemented and tested MultiHeadAttention with:
 Proper dimension reshaping: (batch, seq_len, d_model) → (batch, num_heads, seq_len, d_k)
 Causal masking support
 Output projection
+Tested with shape: (batch_size=4, seq_len=64, d_model=512, num_heads=8)
+Created WEEK_2_NOTES.md file
+
+**Key Insights:**
+
+Q, K, V projections must use different weight matrices (W_q, W_k, W_v)
+Each head operates on reduced dimension (d_k = d_model / num_heads = 64)
+Heads run in parallel, then concatenate back to d_model
+Mask needs to broadcast across batch and head dimensions
+
 
 ## Day 3 (Today)
 
