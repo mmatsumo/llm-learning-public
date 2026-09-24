@@ -99,27 +99,26 @@ class MultiHeadAttention(nn.Module):
         K_w = (self.W_k(K)) # shape (batch_size, seq_len, d_model)
         Q_w = (self.W_q(Q))
         V_w = (self.W_v(V))
-        print("Q_w projection", Q_w.shape)
-
+        
         # Reshape for the num_heads
         K_head = K_w.reshape(batch_size,-1,self.num_heads,self.d_k)
         K_head = K_head.transpose(1,2) # transpose to [batch_size, num_heads, seq_len, d_k] 
 
         Q_head = Q_w.reshape(batch_size,-1,self.num_heads,self.d_k)
         Q_head = Q_head.transpose(1,2) # transpose to [batch_size, num_heads, seq_len, d_k]
-        print("Q_head shape after transpose:", Q_head.shape)
+        #print("Q_head shape after transpose:", Q_head.shape)
 
         V_head = V_w.reshape(batch_size,-1,self.num_heads,self.d_k)
         V_head = V_head.transpose(1,2) # transpose to [batch_size, num_heads, seq_len, d_k]
         
         # scaled dot product with each of the num_heads
         att_output, att_wei = self.attention(Q_head,K_head,V_head,mask) # [batch_size, num_heads, seq_len, d_k]
-        print("att_output ", att_output.shape)
+        #print("att_output ", att_output.shape)
         att_output = att_output.transpose(1, 2).contiguous() # [batch_size, seq_len, num_heads, d_k]
-        print("att_output after transpose ", att_output.shape)
+        #print("att_output after transpose ", att_output.shape)
 
         concat_head = att_output.view(batch_size, seq_len, self.d_model) # [batch_size, seq_len, d_model]
-        print("concat_head ", concat_head.shape)
+        #print("concat_head ", concat_head.shape)
         output = self.W_o(concat_head)
         return output
 
@@ -181,6 +180,66 @@ class FeedForward(nn.Module):
 
         return output
 
+class TransformerBlockUnit(nn.Module):
+    def __init__(self, d_model, d_ff: int = None, dropout = 0.1, num_heads = 8):
+        super().__init__()
+        
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.dropout = dropout
+        self.num_heads = num_heads
+        self.mh = MultiHeadAttention(self.d_model, self.num_heads, self.dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.ff = FeedForward(d_model, self.d_ff, self.dropout)
+    
+    def forward(self, x, mask = None):
+        """ Args:
+        x
+        - Q query
+        - K keys
+        - V values
+        Output:
+        - block unit output x
+        """
+        
+        Q=x
+        K=x
+        V=x
+        
+        # Multi Head Attention
+        attention_output = self.mh(Q,K,V, mask=None)
+
+        # Add and Norm
+        x = self.norm1(attention_output + x)
+
+        # Feedforward
+        
+        ff_output = self.ff(x)
+        x = self.norm2(ff_output + x)
+        return x
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, d_model, num_layers = 6, d_ff=None, num_heads = 8, dropout=0.1):
+        super().__init__()
+        self.pe = PositionalEncoding(d_model)
+        self.layers = nn.ModuleList([
+            TransformerBlockUnit(d_model, d_ff,  dropout, num_heads)
+            for _ in range(num_layers)
+        ])
+    
+    def forward(self, x, mask = None):
+        
+        x= self.pe(x)
+        for layer in self.layers:  
+            x = layer(x, mask)
+        return x
+    
+          
+
+
+
+
 """
 attention= ScaledDotProductAttention(d_model)
 
@@ -205,4 +264,11 @@ ff_test = FeedForward(d_model)
 Q_o = ff_test(Q)
 print(Q_o.shape)
 
+
+
+x = torch.randn(batch_size, seq_len, d_model)
+encoder = TransformerEncoder(d_model, num_layers=2)
+
+output = encoder(x)
+print("Output shape:", output.shape)  # (4, 64, 512)
 """
