@@ -3,8 +3,10 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import math
+
 torch.manual_seed(404)
 
+"""
 # e.g.
 seq_len = 64 #number of input tokens
 d_model = 512 #model dimension
@@ -12,7 +14,9 @@ batch_size, seq_len, d_model = 4, 64, 512
 Q = torch.randn(batch_size, seq_len,d_model) #shape
 K = torch.randn(batch_size, seq_len, d_model) #shape
 V = torch.randn(batch_size, seq_len, d_model) #shape
-
+"""
+### Functional elements of the transformer: 
+# Scaled Dot Product, Multihead Attention, Positional Encoding, Feed Forward NN
 
 # ScaledDotProductAttention
 class ScaledDotProductAttention(nn.Module):
@@ -136,7 +140,7 @@ class PositionalEncoding(nn.Module):
         Returns:
             x + positional_encoding: (batch_size, seq_len, d_model)
         """
-        seq_len = Q.shape[-2]
+        seq_len = x.shape[1]
         pos_encoding = torch.zeros(seq_len,self.d_model)
         
 
@@ -180,6 +184,8 @@ class FeedForward(nn.Module):
 
         return output
 
+### Encoder
+
 class TransformerBlockUnit(nn.Module):
     def __init__(self, d_model, d_ff: int = None, dropout = 0.1, num_heads = 8):
         super().__init__()
@@ -220,25 +226,119 @@ class TransformerBlockUnit(nn.Module):
         return x
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, d_model, num_layers = 6, d_ff=None, num_heads = 8, dropout=0.1):
+    def __init__(self, vocab_size, d_model, num_layers = 6, d_ff=None, num_heads = 8, dropout=0.1):
         super().__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
         self.pe = PositionalEncoding(d_model)
         self.layers = nn.ModuleList([
             TransformerBlockUnit(d_model, d_ff,  dropout, num_heads)
             for _ in range(num_layers)
         ])
+        self.d_model = d_model
     
     def forward(self, x, mask = None):
-        
+        x=self.embedding(x)
+        x = x * math.sqrt(self.d_model)
+
         x= self.pe(x)
         for layer in self.layers:  
             x = layer(x, mask)
         return x
+
+### Decoder
+
+class TransformerDecoderUnit(nn.Module):
+    def __init__(self, d_model, d_ff: int = None, dropout = 0.1, num_heads = 8):
+        super().__init__()
+        
+        self.d_model = d_model
+        self.d_ff = d_ff
+        self.dropout = dropout
+        self.num_heads = num_heads
+
+        #Attention layers, add and norm
+        self.mh = MultiHeadAttention(self.d_model, self.num_heads, self.dropout)
+        self.norm1 = nn.LayerNorm(d_model)
+        self.norm2 = nn.LayerNorm(d_model)
+        self.norm3 = nn.LayerNorm(d_model)
+        self.ff = FeedForward(d_model, self.d_ff, self.dropout)
+        
     
-          
+    def forward(self, x, encoder_output, mask = None):
+        """
+        Args:
+            x: decoder input [batch_size, seq_len, d_model]
+            encoder_output: encoder output [batch_size, seq_len, d_model]
+            tgt_mask: causal mask for self-attention [seq_len, seq_len]
+        
+        Returns:
+            x: [batch_size, seq_len, d_model]
+        """
+        seq_len = x.shape[1]
+
+        if mask==None:
+            # Causal maskl for first attention step
+            mask = torch.tril(torch.ones(seq_len, seq_len))
+            mask = mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len] for broadcasting
+
+        Q=x
+        K=x
+        V=x
 
 
+        attention_output = self.mh(Q,K,V, mask)
+        x=self.norm1(x+attention_output)
+    
+        Q= x
+        K= encoder_output
+        V= encoder_output
 
+        cross_attention_output = self.mh(Q,K,V, mask=None)
+        x = self.norm2(x+ cross_attention_output)
+
+        ff_output = self.ff(x)
+        x = self.norm3(ff_output+x)
+        return x
+
+
+class TransformerDecoder(nn.Module):
+    def __init__(self, vocab_size, d_model, num_layers = 6, d_ff=None, num_heads = 8, dropout=0.1):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.pe = PositionalEncoding(d_model)
+        self.layers = nn.ModuleList([
+            TransformerDecoderUnit(d_model, d_ff,  dropout, num_heads)
+            for _ in range(num_layers)
+        ])
+        self.norm = nn.LayerNorm(d_model)
+        self.output_proj = nn.Linear(d_model, vocab_size)
+        self.d_model = d_model
+        
+    
+    def forward(self, x, encoder_output, mask = None):
+        x = self.embedding(x)
+        x = x * math.sqrt(self.d_model)
+        x= self.pe(x) #x is shifted right
+        for layer in self.layers:  
+            x = layer(x, encoder_output, mask=None)
+
+        x=self.norm(x)
+
+        logits = self.output_proj(x)
+        
+        return logits
+class Transformer(nn.Module):
+    """Complete seq2seq transformer."""
+    def __init__(self, src_vocab_size, tgt_vocab_size, d_model, num_layers=6, 
+                 num_heads=8, d_ff=None, dropout=0.1):
+        super().__init__()
+        self.encoder = TransformerEncoder(src_vocab_size, d_model, num_layers, d_ff, num_heads, dropout)
+        self.decoder = TransformerDecoder(tgt_vocab_size, d_model, num_layers, d_ff, num_heads, dropout)
+    
+    def forward(self, src, tgt, src_mask=None, tgt_mask=None):
+        encoder_output = self.encoder(src, mask=src_mask)
+        decoder_output = self.decoder(tgt, encoder_output, mask=tgt_mask)
+        return decoder_output
 
 """
 attention= ScaledDotProductAttention(d_model)
@@ -267,8 +367,27 @@ print(Q_o.shape)
 
 
 x = torch.randn(batch_size, seq_len, d_model)
-encoder = TransformerEncoder(d_model, num_layers=2)
+x_en = torch.randn(batch_size, seq_len, d_model)
+decoder = TransformerDecoderUnit(d_model, d_ff=2)
 
-output = encoder(x)
+output = decoder(x, x_en)
 print("Output shape:", output.shape)  # (4, 64, 512)
+
+"""
+
+"""" # Decoder testing
+batch_size, seq_len, d_model, vocab_size = 4, 64, 512, 1000
+
+# Encoder
+src = torch.randint(0, vocab_size, (batch_size, seq_len))
+encoder = TransformerEncoder(vocab_size, d_model, num_layers=2)
+encoder_output = encoder(src)
+
+# Decoder
+tgt = torch.randint(0, vocab_size, (batch_size, seq_len))
+decoder = TransformerDecoder(vocab_size, d_model, num_layers=2)
+logits = decoder(tgt, encoder_output)
+
+print("Encoder output shape:", encoder_output.shape)  # [4, 64, 512]
+print("Decoder logits shape:", logits.shape)  # [4, 64, 1000] 
 """
