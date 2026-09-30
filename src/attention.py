@@ -131,6 +131,25 @@ class PositionalEncoding(nn.Module):
         super().__init__()
         assert d_model % 2 == 0
         self.d_model=d_model
+        """ Alternative with buffer
+                # Pre-compute positional encodings
+            pe = torch.zeros(max_seq_len, d_model)
+            position = torch.arange(0, max_seq_len, dtype=torch.float).unsqueeze(1)
+            
+            div_term = torch.exp(torch.arange(0, d_model, 2).float() * 
+                                -(math.log(10000.0) / d_model))
+            
+            pe[:, 0::2] = torch.sin(position * div_term)
+            if d_model % 2 == 1:
+                pe[:, 1::2] = torch.cos(position * div_term)[:-1]
+            else:
+                pe[:, 1::2] = torch.cos(position * div_term)
+            
+            self.register_buffer('pe', pe.unsqueeze(0))  # [1, max_seq_len, d_model]
+            ## in forward
+            seq_len = x.shape[1]
+            return x + self.pe[:, :seq_len, :]
+        """
 
     def forward(self, x):
         """
@@ -141,7 +160,9 @@ class PositionalEncoding(nn.Module):
             x + positional_encoding: (batch_size, seq_len, d_model)
         """
         seq_len = x.shape[1]
-        pos_encoding = torch.zeros(seq_len,self.d_model)
+        device = x.device  # Get device from input
+
+        pos_encoding = torch.zeros(seq_len,self.d_model, device= device)
         
 
         for pos in range(seq_len):
@@ -277,7 +298,7 @@ class TransformerDecoderUnit(nn.Module):
         seq_len = x.shape[1]
 
         if mask==None:
-            # Causal maskl for first attention step
+            # Causal maskl for first self attention step
             mask = torch.tril(torch.ones(seq_len, seq_len))
             mask = mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len] for broadcasting
 
@@ -327,8 +348,9 @@ class TransformerDecoder(nn.Module):
         logits = self.output_proj(x)
         
         return logits
+    
 class Transformer(nn.Module):
-    """Complete seq2seq transformer."""
+    """Complete sequence-to-sequence transformer, seq2seq"""
     def __init__(self, src_vocab_size, tgt_vocab_size, d_model, num_layers=6, 
                  num_heads=8, d_ff=None, dropout=0.1):
         super().__init__()
@@ -340,6 +362,173 @@ class Transformer(nn.Module):
         decoder_output = self.decoder(tgt, encoder_output, mask=tgt_mask)
         return decoder_output
 
+class TransformerGenerator(nn.Module):
+    #Autoregressive text generation with transformer
+    
+    def __init__(self, model, tokenizer= None, device='cpu'):
+        """
+        Args:
+            model: Trained Transformer model
+            tokenizer: Tokenizer with encode/decode methods
+            device: 'cpu' or 'cuda'
+        """
+        super().__init__()
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = device
+        self.model = self.model.to(device)  # Move model to device
+    
+    def generate(self, src, max_len=50, start_token=1, end_token=2, temperature=1.0, top_k=None):
+        """
+        Autoregressive generation: feed one token at a time
+        
+        Args:
+            src: Source sequence [batch_size, seq_len] (encoder_input)
+            max_len: Maximum length of generated sequence
+            start_token: Token ID to start generation (usually <START>)
+            end_token: Token ID that stops generation (usually <END>)
+            temperature: Controls randomness (1.0 = normal, >1 = more random, <1 = less random)
+            top_k: If set, only sample from top-k tokens (e.g. top_k=50)
+        
+        Returns:
+            generated: Generated token IDs [batch_size, generated_seq_len]
+        """
+        self.model.eval()
+        batch_size = src.shape[0]
+        
+        with torch.no_grad(): # context-manager and decorator
+            # Encode source
+            encoder_output = self.model.encoder(src)
+            
+            # Initialize target with start token
+            tgt = torch.full((batch_size, 1), start_token, dtype=torch.long, device=self.device)
+            
+            for step in range(max_len):
+                # Create causal mask for current target length
+                tgt_len = tgt.shape[1]
+                tgt_mask = torch.tril(torch.ones(tgt_len, tgt_len, device=self.device))
+                tgt_mask = tgt_mask.unsqueeze(0).unsqueeze(0)
+                
+                # Forward pass
+                logits = self.model.decoder(tgt, encoder_output, mask=tgt_mask)
+                
+                # Get next token logits (last position)
+                next_logits = logits[:, -1, :]  # [batch_size, vocab_size]
+                
+                # Apply temperature
+                next_logits = next_logits / temperature
+                
+                # Top-k sampling (optional)
+                if top_k is not None:
+                    top_k_logits, top_k_indices = torch.topk(next_logits, top_k, dim=-1)
+                    next_logits_filtered = torch.full_like(next_logits, float('-inf'))
+                    next_logits_filtered.scatter_(-1, top_k_indices, top_k_logits)
+                    next_logits = next_logits_filtered
+                
+                # Sample from distribution
+                probs = F.softmax(next_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)  # [batch_size, 1]
+                
+                # Append to sequence
+                tgt = torch.cat([tgt, next_token], dim=1)
+                
+                # Check if all sequences generated end token
+                if (next_token == end_token).all():
+                    break
+        
+        return tgt
+    
+    def generate_greedy(self, src, max_len=50, start_token=1, end_token=2):
+        """
+        Greedy decoding: always pick highest probability token.
+        (Faster, deterministic, but may not be optimal)
+        
+        Args:
+            src: Source sequence [batch_size, seq_len]
+            max_len: Maximum length
+            start_token: Start token ID
+            end_token: End token ID
+        
+        Returns:
+            generated: Token IDs [batch_size, generated_seq_len]
+        """
+        self.model.eval()
+        batch_size = src.shape[0]
+        
+        with torch.no_grad():
+            encoder_output = self.model.encoder(src)
+            tgt = torch.full((batch_size, 1), start_token, dtype=torch.long, device=self.device)
+            
+            for step in range(max_len):
+                tgt_len = tgt.shape[1]
+                tgt_mask = torch.tril(torch.ones(tgt_len, tgt_len, device=self.device))
+                tgt_mask = tgt_mask.unsqueeze(0).unsqueeze(0)
+                
+                logits = self.model.decoder(tgt, encoder_output, mask=tgt_mask)
+                next_logits = logits[:, -1, :]
+                
+                # Greedy: argmax
+                next_token = next_logits.argmax(dim=-1, keepdim=True)  # [batch_size, 1]
+                tgt = torch.cat([tgt, next_token], dim=1)
+                
+                if (next_token == end_token).all():
+                    break
+        
+        return tgt
+
+class CharTokenizer:
+    ## Simple character-level tokenizer ##
+    
+    def __init__(self, text):
+        """
+        Args:
+            text: Raw text to build vocabulary from
+        """
+        self.chars = sorted(set(text)) #no repetition
+        self.vocab_size = len(self.chars)
+        self.char_to_idx = {c: i for i, c in enumerate(self.chars)}
+        self.idx_to_char = {i: c for i, c in enumerate(self.chars)}
+        
+        # Special tokens
+        self.START_TOKEN = self.vocab_size
+        self.END_TOKEN = self.vocab_size + 1
+        
+
+        # Add special tokens to idx_to_char
+        self.idx_to_char[self.START_TOKEN] = '<START>'
+        self.idx_to_char[self.END_TOKEN] = '<END>'
+        self.vocab_size += 2  # Account for special tokens
+
+        print(f"Tokenizer created: {len(self.chars)} chars + 2 special tokens = {self.vocab_size} vocab")
+    
+    def encode(self, text):
+        """Convert text to token IDs.
+        
+        Args:
+            text: String to encode
+        
+        Returns:
+            List of token IDs
+        """
+        return [self.char_to_idx[c] for c in text]
+    
+    def decode(self, token_ids):
+        """Convert token IDs back to text.
+        
+        Args:
+            token_ids: List or tensor of token IDs
+        
+        Returns:
+            Decoded string
+        """
+        # Handle tensor input
+        if isinstance(token_ids, torch.Tensor):
+            token_ids = token_ids.tolist()
+        result = []
+        for i in token_ids:
+            if i < len(self.chars):  # Regular character
+                result.append(self.idx_to_char[i])
+        return ''.join(result)
 """
 attention= ScaledDotProductAttention(d_model)
 
