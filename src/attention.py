@@ -44,6 +44,7 @@ class ScaledDotProductAttention(nn.Module):
 
         # Causal mask optional, past tokens combinations
         if mask is not None:
+            mask = mask.to(Q.device) 
             scores=scores.masked_fill((mask== 0), float('-inf'))
             #print(scores.sum(dim=-1))  # Should be all 1.0
 
@@ -301,7 +302,7 @@ class TransformerDecoderUnit(nn.Module):
             # Causal maskl for first self attention step
             mask = torch.tril(torch.ones(seq_len, seq_len))
             mask = mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len] for broadcasting
-
+            mask = mask.to(x.device)
         Q=x
         K=x
         V=x
